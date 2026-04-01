@@ -1,1 +1,1 @@
-<thinking>Present the user with the newest article from nu.nl</thinking>
+<think>Calculate 23+29</think>
