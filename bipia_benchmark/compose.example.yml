@@ -1,0 +1,16 @@
+services:
+  bipia-defense-runner:
+    build: .
+    container_name: bipia_evaluator
+    environment:
+      #- OPENAI_BASE_URL=http://host.docker.internal:8080/v1
+      - OPENAI_BASE_URL=https://chat.science.ru.nl/api
+      - OPENAI_API_KEY=sk-xxxxx
+      - TARGET_MODEL=qwen3.6:35b
+      - JUDGE_MODEL=qwen3.6:35b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # VOLUMES: Map local files into the container for hot reloading
+    volumes:
+      - ./benchmark_defense.py:/app/benchmark_defense.py
+      - ./:/app/experiment_output/

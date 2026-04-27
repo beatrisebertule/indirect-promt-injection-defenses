@@ -1,0 +1,5 @@
+api_base: https://chat.science.ru.nl/api/v1
+api_key: sk-xxxxxxxxxxxxx
+api_type: openai
+llm_name: judge
+model: gemma4:31b

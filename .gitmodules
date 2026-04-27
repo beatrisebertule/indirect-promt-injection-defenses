@@ -1,0 +1,3 @@
+[submodule "bipia_benchmark/BIPIA"]
+	path = bipia_benchmark/BIPIA
+	url = https://github.com/microsoft/BIPIA.git
