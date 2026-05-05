@@ -1,3 +1,5 @@
 bipia_benchmark/judge_config.yaml
 bipia_benchmark/compose.yml
 bipia_benchmark/results/
+bipia_benchmark/compose.example.yaml
+bipia_benchmark/judge_config.example.yaml
