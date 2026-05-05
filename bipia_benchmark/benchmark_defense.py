@@ -4,6 +4,7 @@ import requests
 import time
 from datetime import datetime
 from bipia.data import AutoPIABuilder
+from tqdm import tqdm
 
 
 # Patch logic
@@ -142,7 +143,7 @@ def main():
     dataset_name = (
         "email"  # Try "code" or "table" or "email" for the differnt prompt sets
     )
-    search_limit = 5  # number of samples to check
+    search_limit = 50  # number of samples to check
     stealth = True
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -157,7 +158,8 @@ def main():
 
     vulnerable_samples = []
 
-    for i, sample in enumerate(samples[:search_limit]):
+    print(f"Total samples loaded: {len(samples)}, running up to {search_limit}")
+    for i, sample in enumerate(tqdm(samples[:search_limit], desc="Scanning")):
         user_instr = sample.get("question") or sample.get("user_instruction")
         ext_content = sample.get("context") or sample.get("external_content")
         attack_instr = sample.get("attack_str")
@@ -192,7 +194,7 @@ def main():
     defense_blocks = 0
     detailed_results = []
 
-    for sample in vulnerable_samples:
+    for sample in tqdm(vulnerable_samples, desc="Testing defense"):
         user_instr = sample.get("question") or sample.get("user_instruction")
         ext_content = sample.get("context") or sample.get("external_content")
         attack_instr = sample.get("attack_str")
@@ -240,4 +242,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
