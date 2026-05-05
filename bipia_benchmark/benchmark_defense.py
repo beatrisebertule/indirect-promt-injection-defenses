@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 from datetime import datetime
 from bipia.data import AutoPIABuilder
@@ -59,7 +60,7 @@ class BipiaDefenseBenchmark:
         )[-1],
     }
 
-    def __init__(self, dataset_name="code", search_limit=50, stealth=True):
+    def __init__(self, dataset_name="email", search_limit=50, stealth=True):
         self._api_base = os.getenv("OPENAI_BASE_URL")
         self._api_key = os.getenv("OPENAI_API_KEY")
         self._target_model = os.getenv("TARGET_MODEL")
@@ -92,9 +93,20 @@ class BipiaDefenseBenchmark:
             "messages": messages,
             "temperature": 0.0,
         }
-        response = requests.post(url, json=payload, headers=headers, timeout=600)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    url, json=payload, headers=headers, timeout=120
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if attempt == 2:
+                    raise
+                wait = 2**attempt
+                print(f"Request failed ({e}), retrying in {wait}s...")
+                time.sleep(wait)
 
     def _evaluate_attack_success(
         self, question: str, attack_instr: str, response: str
@@ -150,15 +162,27 @@ class BipiaDefenseBenchmark:
             "Files created: defense_results.jsonl, comparison_summary.json, asr_results.json"
         )
 
+    def _print_config(self) -> None:
+        sep = "=" * 40
+        print(sep)
+        print("BIPIA Defense Benchmark")
+        print(sep)
+        print(f"  Dataset:      {self._dataset_name}")
+        print(f"  Stealth:      {self._stealth}")
+        print(f"  Search limit: {self._search_limit}")
+        print(f"  Target model: {self._target_model}")
+        print(f"  Judge model:  {self._judge_model}")
+        print(f"  Defenses:     {', '.join(self._defense_configs.keys())}")
+        print(f"  Timestamp:    {self._timestamp}")
+        print(sep)
+
     def _scan_vulnerabilities(self, samples: list) -> list:
         vulnerable_samples = []
-        print(
-            f"Total samples loaded: {len(samples)}, running up to {self._search_limit}"
-        )
+        error_count = 0
+        total = min(len(samples), self._search_limit)
+        print(f"Scanning {total} samples...")
 
-        for i, sample in enumerate(
-            tqdm(samples[: self._search_limit], desc="Scanning", miniters=1)
-        ):
+        for i, sample in enumerate(tqdm(samples[:total], desc="Scanning", miniters=1)):
             user_instr = sample.get("question") or sample.get("user_instruction")
             ext_content = sample.get("context") or sample.get("external_content")
             attack_instr = sample.get("attack_str")
@@ -170,21 +194,24 @@ class BipiaDefenseBenchmark:
                 is_successful = self._evaluate_attack_success(
                     user_instr, attack_instr, response
                 )
-
                 if is_successful:
-                    print(f"found vuln at sample {i}")
                     sample["baseline_response"] = response
                     vulnerable_samples.append(sample)
-                elif i % 5 == 0:
-                    print(f"checked {i} samples (found {len(vulnerable_samples)})")
             except Exception as e:
+                error_count += 1
                 print(f"Error at sample {i}: {e}")
 
+        vuln_rate = (len(vulnerable_samples) / total * 100) if total else 0
+        print(
+            f"\nScan complete: {len(vulnerable_samples)}/{total} vulnerable ({vuln_rate:.1f}%), {error_count} errors"
+        )
         return vulnerable_samples
 
     def _test_defenses(self, vulnerable_samples: list) -> None:
         n = len(vulnerable_samples)
-        print(f"Testing defenses on {n} successful prompts")
+        print(
+            f"\nTesting {len(self._defense_configs)} defenses on {n} vulnerable samples..."
+        )
 
         detailed_results = []
         per_defense_blocks = {name: 0 for name in self._defense_configs}
@@ -234,19 +261,18 @@ class BipiaDefenseBenchmark:
             },
         }
 
-        print("\n" + "=" * 40)
-        print(f"Vulnerabilities found: {n}")
+        sep = "=" * 40
+        print(f"\n{sep}")
+        print("Defense results:")
         for name, blocks in per_defense_blocks.items():
             rate = (blocks / n * 100) if n else 0
             print(f"  {name}: blocked {blocks}/{n} ({rate:.2f}%)")
-        print("=" * 40)
+        print(sep)
 
         self._save_results(vulnerable_samples, detailed_results, summary)
 
     def run(self) -> None:
-        print(
-            f"Scanning {self._dataset_name} for vulnerabilities (Stealth={self._stealth})"
-        )
+        self._print_config()
 
         builder = AutoPIABuilder.from_name(self._dataset_name)(seed=2023)
         benchmark_path = f"/app/BIPIA/benchmark/{self._dataset_name}/test.jsonl"
@@ -258,7 +284,7 @@ class BipiaDefenseBenchmark:
         vulnerable_samples = self._scan_vulnerabilities(samples)
 
         if not vulnerable_samples:
-            print("no vulns found. Try switching prompt datasets")
+            print("No vulnerabilities found. Try a different dataset.")
             return
 
         self._test_defenses(vulnerable_samples)

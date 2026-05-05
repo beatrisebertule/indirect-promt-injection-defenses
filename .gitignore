@@ -3,6 +3,9 @@ bipia_benchmark/compose.yml
 bipia_benchmark/results/
 
 
+bipia_benchmark/asr_results.json
+bipia_benchmark/comparision_summary.json
+bipia_benchmark/defense_results.json
 
 # DEFAULT .GITIGNORE
 
