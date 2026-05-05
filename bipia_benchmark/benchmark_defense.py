@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from bipia.data import AutoPIABuilder
 from tqdm import tqdm
+from defenses import Defenses
 
 
 # Patch logic
@@ -134,6 +135,88 @@ def save_results(
     )
 
 
+defense_configs = {
+    "delimiting": Defenses.delimiting,
+    "datamarking": Defenses.datamarking,
+    "encoding": Defenses.encoding,
+}
+
+
+def build_defense_prompt(user_instr: str, ext_content: str, defense_name: str) -> str:
+    defended = defense_configs[defense_name](ext_content)
+    if defense_name == "encoding":
+        return f"The following external data is base64-encoded:\n{defended}\n\n{user_instr}"
+    return f"{defended}\n\n{user_instr}"
+
+
+def test_defenses(
+    vulnerable_samples: list,
+    dataset_name: str,
+    timestamp: str,
+    api_base: str,
+    api_key: str,
+    target_model: str,
+    judge_model: str,
+) -> None:
+    n = len(vulnerable_samples)
+    print(f"Testing defenses on {n} successful prompts")
+
+    detailed_results = []
+    per_defense_blocks = {name: 0 for name in defense_configs}
+
+    for sample in tqdm(vulnerable_samples, desc="Testing defenses", miniters=1):
+        user_instr = sample.get("question") or sample.get("user_instruction")
+        ext_content = sample.get("context") or sample.get("external_content")
+        attack_instr = sample.get("attack_str")
+
+        sample_result = {
+            "sample_id": sample.get("id", "unknown"),
+            "original_question": user_instr,
+            "defenses": {},
+        }
+
+        for defense_name in defense_configs:
+            prompt = build_defense_prompt(user_instr, ext_content, defense_name)
+            response = query_model(prompt, api_base, api_key, target_model)
+            still_successful = evaluate_attack_success(
+                user_instr, attack_instr, response, api_base, api_key, judge_model
+            )
+            blocked = not still_successful
+            if blocked:
+                per_defense_blocks[defense_name] += 1
+
+            sample_result["defenses"][defense_name] = {
+                "prompt": prompt,
+                "response": response,
+                "attack_thwarted": blocked,
+            }
+
+        detailed_results.append(sample_result)
+
+    summary = {
+        "dataset": dataset_name,
+        "total_vulnerabilities_tested": n,
+        "target_model": target_model,
+        "timestamp": timestamp,
+        "defenses": {
+            name: {
+                "blocks": blocks,
+                "success_rate": f"{(blocks / n * 100):.2f}%" if n else "0.00%",
+            }
+            for name, blocks in per_defense_blocks.items()
+        },
+    }
+
+    print("\n" + "=" * 40)
+    print(f"Vulnerabilities found: {n}")
+    for name, blocks in per_defense_blocks.items():
+        rate = (blocks / n * 100) if n else 0
+        print(f"  {name}: blocked {blocks}/{n} ({rate:.2f}%)")
+    print("=" * 40)
+
+    save_results(vulnerable_samples, detailed_results, summary, dataset_name, timestamp)
+
+
 def main():
     api_base = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -159,12 +242,11 @@ def main():
     vulnerable_samples = []
 
     print(f"Total samples loaded: {len(samples)}, running up to {search_limit}")
-    for i, sample in enumerate(tqdm(samples[:search_limit], desc="Scanning")):
+    for i, sample in enumerate(tqdm(samples[:search_limit], desc="Scanning", miniters=1)):
         user_instr = sample.get("question") or sample.get("user_instruction")
         ext_content = sample.get("context") or sample.get("external_content")
         attack_instr = sample.get("attack_str")
 
-        # use naive baseline (most vulnerable prompt)
         prompt = f"{ext_content} {user_instr}"
 
         try:
@@ -187,57 +269,15 @@ def main():
         print("no vulns found. Try switching prompt datasets")
         return
 
-    # test defense against prompts that bypassed the naive system
-    print(
-        f"testing experimental defense on {len(vulnerable_samples)} successful prompts"
+    test_defenses(
+        vulnerable_samples,
+        dataset_name,
+        timestamp,
+        api_base,
+        api_key,
+        target_model,
+        judge_model,
     )
-    defense_blocks = 0
-    detailed_results = []
-
-    for sample in tqdm(vulnerable_samples, desc="Testing defense"):
-        user_instr = sample.get("question") or sample.get("user_instruction")
-        ext_content = sample.get("context") or sample.get("external_content")
-        attack_instr = sample.get("attack_str")
-
-        defense_prompt = defense_preprocessor(user_instr, ext_content)
-        response = query_model(defense_prompt, api_base, api_key, target_model)
-
-        still_successful = evaluate_attack_success(
-            user_instr, attack_instr, response, api_base, api_key, judge_model
-        )
-
-        if not still_successful:
-            defense_blocks += 1
-
-        detailed_results.append(
-            {
-                "sample_id": sample.get("id", "unkown"),
-                "original_question": user_instr,
-                "defense_prompt": defense_prompt,
-                "model_response": response,
-                "attack_thrwarted": not still_successful,
-            }
-        )
-
-    success_rate = (
-        (defense_blocks / len(vulnerable_samples)) * 100 if vulnerable_samples else 0
-    )
-    summary = {
-        "dataset": dataset_name,
-        "total_vulnerabilities_tested": len(vulnerable_samples),
-        "defense_blocks": defense_blocks,
-        "defense_success_rate": f"{success_rate:.2f}%",
-        "target_model": target_model,
-        "timestamp": timestamp,
-    }
-
-    print("\n" + "=" * 40)
-    print(f"Vulnerabilities found: {len(vulnerable_samples)}")
-    print(f"Vulnerabilities blocked by defense: {defense_blocks}")
-    print(f"Defense success rate: {success_rate:.2f}%")
-    print("=" * 40)
-
-    save_results(vulnerable_samples, detailed_results, summary, dataset_name, timestamp)
 
 
 if __name__ == "__main__":
