@@ -1,0 +1,13 @@
+[project]
+name = "attack-ai-now"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jupyter>=1.1.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["defenses*", "bipia_benchmark*"]
