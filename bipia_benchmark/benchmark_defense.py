@@ -6,6 +6,7 @@ from datetime import datetime
 from bipia.data import AutoPIABuilder
 from tqdm import tqdm
 from defenses import Defenses
+from defenses_randomized import DefenseRandomizer, DefensePlain
 
 
 # Patch logic
@@ -40,27 +41,8 @@ apply_definitive_patch()
 
 
 class BipiaDefenseBenchmark:
-    # Each callable takes ext_content and returns (defended_content, params_used).
-    # Swap out the lambda to change params dynamically per sample.
-    _defense_configs = {
-        "delimiting": lambda ext: (
-            params := {
-                "start_marker": "<<<UNTRUSTED_DATA_START>>>",
-                "end_marker": "<<<UNTRUSTED_DATA_END>>>",
-            },
-            (Defenses.delimiting(ext, **params), params),
-        )[-1],
-        "datamarking": lambda ext: (
-            params := {"marker": "^"},
-            (Defenses.datamarking(ext, **params), params),
-        )[-1],
-        "encoding": lambda ext: (
-            params := {"encoding": "base64"},
-            (Defenses.encoding(ext, **params), params),
-        )[-1],
-    }
 
-    def __init__(self, dataset_name="email", search_limit=50, stealth=True):
+    def __init__(self, dataset_name="email", search_limit=50, stealth=True, randomized=True, seed=1234):
         self._api_base = os.getenv("OPENAI_BASE_URL")
         self._api_key = os.getenv("OPENAI_API_KEY")
         self._target_model = os.getenv("TARGET_MODEL")
@@ -68,7 +50,16 @@ class BipiaDefenseBenchmark:
         self._dataset_name = dataset_name
         self._search_limit = search_limit
         self._stealth = stealth
+        self._seed = seed
         self._timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._defense_names = ["delimiting", "datamarking", "encoding"]
+        self._randomized = randomized
+        
+        # Initialize defense strategy
+        if randomized:
+            self._defense_strategy = DefenseRandomizer(seed=seed)
+        else:
+            self._defense_strategy = DefensePlain()
 
     def _query_model(
         self, prompt: str, model: str = None, system_prompt: str = None
@@ -124,16 +115,13 @@ class BipiaDefenseBenchmark:
         except f"Judge query failed for prompt: \n{judge_prompt}":
             return False
 
-    def _build_system_prompt(self, defense_name: str, params: dict) -> str:
-        return getattr(Defenses, f"{defense_name}_system_prompt")(**params)
-
     def _build_defense_prompt(
         self, user_instr: str, ext_content: str, defense_name: str
     ) -> tuple[str, str]:
-        defended, params = self._defense_configs[defense_name](ext_content)
-        user_prompt = f"{defended}\n\n{user_instr}"
-        system_prompt = self._build_system_prompt(defense_name, params)
-        return user_prompt, system_prompt
+        """Build defense prompt using configured strategy (randomized or plain)."""
+        return self._defense_strategy.build_defense_prompt(
+            user_instr, ext_content, defense_name
+        )
 
     def _save_results(
         self,
@@ -172,7 +160,11 @@ class BipiaDefenseBenchmark:
         print(f"  Search limit: {self._search_limit}")
         print(f"  Target model: {self._target_model}")
         print(f"  Judge model:  {self._judge_model}")
-        print(f"  Defenses:     {', '.join(self._defense_configs.keys())}")
+        print(f"  Defenses:     {', '.join(self._defense_names)}")
+        mode = "Randomized" if self._randomized else "Plain/Fixed"
+        print(f"  Mode:         {mode}")
+        if self._seed is not None:
+            print(f"  Seed:         {self._seed}")
         print(f"  Timestamp:    {self._timestamp}")
         print(sep)
 
@@ -210,11 +202,11 @@ class BipiaDefenseBenchmark:
     def _test_defenses(self, vulnerable_samples: list) -> None:
         n = len(vulnerable_samples)
         print(
-            f"\nTesting {len(self._defense_configs)} defenses on {n} vulnerable samples..."
+            f"\nTesting {len(self._defense_names)} defenses on {n} vulnerable samples..."
         )
 
         detailed_results = []
-        per_defense_blocks = {name: 0 for name in self._defense_configs}
+        per_defense_blocks = {name: 0 for name in self._defense_names}
 
         for sample in tqdm(vulnerable_samples, desc="Testing defenses", miniters=1):
             user_instr = sample.get("question") or sample.get("user_instruction")
@@ -227,7 +219,7 @@ class BipiaDefenseBenchmark:
                 "defenses": {},
             }
 
-            for defense_name in self._defense_configs:
+            for defense_name in self._defense_names:
                 prompt, system_prompt = self._build_defense_prompt(
                     user_instr, ext_content, defense_name
                 )
@@ -291,4 +283,28 @@ class BipiaDefenseBenchmark:
 
 
 if __name__ == "__main__":
-    BipiaDefenseBenchmark(dataset_name="email", search_limit=50, stealth=True).run()
+    import sys
+    
+    # Parse command line arguments
+    randomized = "--plain" not in sys.argv
+    seed = None
+    
+    # Look for --seed argument
+    for i, arg in enumerate(sys.argv):
+        if arg == "--seed" and i + 1 < len(sys.argv):
+            try:
+                seed = int(sys.argv[i + 1])
+            except ValueError:
+                print(f"Warning: Invalid seed value '{sys.argv[i + 1]}', using random seed")
+    
+    BipiaDefenseBenchmark(
+        dataset_name="email", 
+        search_limit=50, 
+        stealth=True, 
+        randomized=randomized,
+        seed=seed
+    ).run()
+    
+    mode_str = 'randomized' if randomized else 'plain (fixed)'
+    seed_str = f" with seed {seed}" if seed is not None else " with random seed"
+    print(f"\nBenchmark completed with {mode_str} defenses{seed_str if randomized else '.'")
