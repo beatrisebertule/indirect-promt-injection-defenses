@@ -47,7 +47,24 @@ class Defenses:
     def encoding(untrusted_input: str, encoding: str = "base64") -> str:
         if encoding == "base64":
             return base64.b64encode(untrusted_input.encode()).decode()
+        elif encoding == "rot13":
+            return Defenses._rot13_encode(untrusted_input)
+        elif encoding == "hex":
+            return untrusted_input.encode().hex()
         raise ValueError(f"Unsupported encoding: {encoding}")
+    
+    @staticmethod
+    def _rot13_encode(text: str) -> str:
+        """Apply ROT13 encoding to text."""
+        result = []
+        for char in text:
+            if 'a' <= char <= 'z':
+                result.append(chr((ord(char) - ord('a') + 13) % 26 + ord('a')))
+            elif 'A' <= char <= 'Z':
+                result.append(chr((ord(char) - ord('A') + 13) % 26 + ord('A')))
+            else:
+                result.append(char)
+        return ''.join(result)
 
     @staticmethod
     def encoding_system_prompt(encoding: str = "base64") -> str:
