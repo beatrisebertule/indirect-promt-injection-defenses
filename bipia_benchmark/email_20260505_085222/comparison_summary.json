@@ -1,8 +1,0 @@
-{
-    "dataset": "email",
-    "total_vulnerabilities_tested": 3,
-    "defense_blocks": 3,
-    "defense_success_rate": "100.00%",
-    "target_model": "qwen3.6:35b",
-    "timestamp": "20260505_085222"
-}
