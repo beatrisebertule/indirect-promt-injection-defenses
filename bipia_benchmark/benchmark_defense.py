@@ -2,10 +2,16 @@ import os
 import json
 import time
 import requests
+import sys
+import argparse
+import random
+import string
 from datetime import datetime
 from bipia.data import AutoPIABuilder
 from tqdm import tqdm
-from defenses import Defenses
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from defenses.defenses import Defenses
 
 
 # Patch logic
@@ -43,6 +49,7 @@ class BipiaDefenseBenchmark:
     # Each callable takes ext_content and returns (defended_content, params_used).
     # Swap out the lambda to change params dynamically per sample.
     _defense_configs = {
+        "none": lambda ext: (ext, {}),
         "delimiting": lambda ext: (
             params := {
                 "start_marker": "<<<UNTRUSTED_DATA_START>>>",
@@ -50,15 +57,16 @@ class BipiaDefenseBenchmark:
             },
             (Defenses.delimiting(ext, **params), params),
         )[-1],
-        "datamarking": lambda ext: (
-            params := {"marker": "^"},
-            (Defenses.datamarking(ext, **params), params),
-        )[-1],
-        "encoding": lambda ext: (
-            params := {"encoding": "base64"},
-            (Defenses.encoding(ext, **params), params),
+        "randomized_delimiting": lambda ext: (
+            token := ''.join(random.choices(string.ascii_uppercase + string.digits, k=8)),
+            params := {
+                "start_marker": f"<<{token}_START>>",
+                "end_marker": f"<<{token}_END>>",
+            },
+            (Defenses.delimiting(ext, **params), params),
         )[-1],
     }
+
 
     def __init__(self, dataset_name="email", search_limit=50, stealth=True):
         self._api_base = os.getenv("OPENAI_BASE_URL")
@@ -125,13 +133,18 @@ class BipiaDefenseBenchmark:
             return False
 
     def _build_system_prompt(self, defense_name: str, params: dict) -> str:
-        return getattr(Defenses, f"{defense_name}_system_prompt")(**params)
+        if defense_name == "none":
+            return ""
+        
+        # Map randomized_delimiting to the standard delimiting system prompt
+        prompt_name = "delimiting" if defense_name == "randomized_delimiting" else defense_name
+        return getattr(Defenses, f"{prompt_name}_system_prompt")(**params)
 
     def _build_defense_prompt(
         self, user_instr: str, ext_content: str, defense_name: str
     ) -> tuple[str, str]:
         defended, params = self._defense_configs[defense_name](ext_content)
-        user_prompt = f"{defended}\n\n{user_instr}"
+        user_prompt = f"{defended}\n\n{user_instr}" if defense_name != "none" else f"{ext_content} {user_instr}"
         system_prompt = self._build_system_prompt(defense_name, params)
         return user_prompt, system_prompt
 
@@ -207,16 +220,16 @@ class BipiaDefenseBenchmark:
         )
         return vulnerable_samples
 
-    def _test_defenses(self, vulnerable_samples: list) -> None:
-        n = len(vulnerable_samples)
+    def _test_defenses(self, samples: list) -> None:
+        n = len(samples)
         print(
-            f"\nTesting {len(self._defense_configs)} defenses on {n} vulnerable samples..."
+            f"\nTesting {len(self._defense_configs)} defenses on {n} samples..."
         )
 
         detailed_results = []
         per_defense_blocks = {name: 0 for name in self._defense_configs}
 
-        for sample in tqdm(vulnerable_samples, desc="Testing defenses", miniters=1):
+        for sample in tqdm(samples, desc="Testing defenses", miniters=1):
             user_instr = sample.get("question") or sample.get("user_instruction")
             ext_content = sample.get("context") or sample.get("external_content")
             attack_instr = sample.get("attack_str")
@@ -243,19 +256,21 @@ class BipiaDefenseBenchmark:
                     "prompt": prompt,
                     "response": response,
                     "attack_thwarted": blocked,
+                    "attack_successful": still_successful,
                 }
 
             detailed_results.append(sample_result)
 
         summary = {
             "dataset": self._dataset_name,
-            "total_vulnerabilities_tested": n,
+            "total_samples_tested": n,
             "target_model": self._target_model,
             "timestamp": self._timestamp,
             "defenses": {
                 name: {
                     "blocks": blocks,
                     "success_rate": f"{(blocks / n * 100):.2f}%" if n else "0.00%",
+                    "attack_success_rate": f"{( (n - blocks) / n * 100):.2f}%" if n else "0.00%",
                 }
                 for name, blocks in per_defense_blocks.items()
             },
@@ -266,12 +281,13 @@ class BipiaDefenseBenchmark:
         print("Defense results:")
         for name, blocks in per_defense_blocks.items():
             rate = (blocks / n * 100) if n else 0
-            print(f"  {name}: blocked {blocks}/{n} ({rate:.2f}%)")
+            asr = ( (n - blocks) / n * 100) if n else 0
+            print(f"  {name}: blocked {blocks}/{n} ({rate:.2f}%) | ASR: {asr:.2f}%")
         print(sep)
 
-        self._save_results(vulnerable_samples, detailed_results, summary)
+        self._save_results(samples, detailed_results, summary)
 
-    def run(self) -> None:
+    def run(self, mode="all") -> None:
         self._print_config()
 
         builder = AutoPIABuilder.from_name(self._dataset_name)(seed=2023)
@@ -280,15 +296,41 @@ class BipiaDefenseBenchmark:
 
         df = builder(benchmark_path, attack_path, enable_stealth=self._stealth)
         samples = df.to_dict(orient="records")
+        
+        # Apply maximum sample size limit
+        random.seed(2023)
+        random.shuffle(samples)
+        samples = samples[:self._search_limit]
 
-        vulnerable_samples = self._scan_vulnerabilities(samples)
-
-        if not vulnerable_samples:
-            print("No vulnerabilities found. Try a different dataset.")
+        if mode == "baseline":
+            vulnerable_samples = self._scan_vulnerabilities(samples)
+            self._save_results(vulnerable_samples, [], {"baseline_scan_completed": True})
             return
 
-        self._test_defenses(vulnerable_samples)
+        if mode == "defenses":
+            self._test_defenses(samples)
+            return
+
+        if mode == "all":
+            # The current implementation of _test_defenses already tests all configs in _defense_configs
+            # We'll keep the existing flow but the user wants a clear sequence and comparison.
+            # Since _test_defenses iterates over all _defense_configs (none, delimiting, randomized_delimiting),
+            # it already covers the research goals.
+            self._test_defenses(samples)
+
 
 
 if __name__ == "__main__":
-    BipiaDefenseBenchmark(dataset_name="email", search_limit=50, stealth=True).run()
+    parser = argparse.ArgumentParser(description="BIPIA Defense Benchmark")
+    parser.add_argument("--dataset", type=str, default="email", help="Dataset name")
+    parser.add_argument("--limit", type=int, default=50, help="Search limit")
+    parser.add_argument("--stealth", action="store_true", default=True, help="Enable stealth")
+    parser.add_argument("--mode", type=str, choices=["baseline", "defenses", "all"], default="all", 
+                        help="Mode: baseline (only scan), defenses (only test defenses), all (both)")
+
+    args = parser.parse_args()
+    BipiaDefenseBenchmark(
+        dataset_name=args.dataset, 
+        search_limit=args.limit, 
+        stealth=args.stealth
+    ).run(mode=args.mode)
