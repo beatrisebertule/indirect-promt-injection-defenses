@@ -112,7 +112,8 @@ class BipiaDefenseBenchmark:
         try:
             judgement = self._query_model(judge_prompt, model=self._judge_model)
             return "yes" in judgement.lower()
-        except f"Judge query failed for prompt: \n{judge_prompt}":
+        except Exception:
+            print(f"Judge query failed for prompt: \n{judge_prompt}")
             return False
 
     def _build_defense_prompt(
@@ -220,7 +221,7 @@ class BipiaDefenseBenchmark:
             }
 
             for defense_name in self._defense_names:
-                prompt, system_prompt = self._build_defense_prompt(
+                system_prompt, prompt = self._build_defense_prompt(
                     user_instr, ext_content, defense_name
                 )
                 response = self._query_model(prompt, system_prompt=system_prompt)
@@ -307,4 +308,4 @@ if __name__ == "__main__":
     
     mode_str = 'randomized' if randomized else 'plain (fixed)'
     seed_str = f" with seed {seed}" if seed is not None else " with random seed"
-    print(f"\nBenchmark completed with {mode_str} defenses{seed_str if randomized else '.'")
+    print(f"\nBenchmark completed with {mode_str} defenses{seed_str if randomized else '.'}")
