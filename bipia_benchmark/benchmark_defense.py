@@ -96,6 +96,7 @@ class BipiaDefenseBenchmark:
         self._dataset_name = dataset_name
         self._search_limit = search_limit
         self._stealth = stealth
+        self._seed = seed
         self._timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._concurrency = concurrency
         self._mock = mock

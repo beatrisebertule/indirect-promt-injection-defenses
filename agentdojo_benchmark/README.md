@@ -1,4 +1,4 @@
-# How to Run agentDojo
+# How to Run agentDojo on Docker
 
 Build the docker:\
 `docker build -t yourusername/agentdojo-benchmark .`
@@ -21,3 +21,23 @@ There are four task suites - worksapce, slack, travel, and banking.
 There are many attacks suites...
 
 Run `python -m agentdojo.scripts.benchmark --help` to see other options (all attack suites).
+
+
+# How to run agentDojo with no Docker 
+Install agentDojo:
+`pip install agentdojo`
+
+For local (uni) model use change `agent_pipeline.py`:
+```
+elif provider == "local":
+	client = openai.OpenAI(
+		api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
+		base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1"),
+		timeout=120,
+	)
+	if model_id is None:
+		model_id = _get_local_model_id(port)
+	logging.info(f"Using local model: {model_id}")
+	logging.info(f"Using tool delimiter: {tool_delimiter}")
+	llm = LocalLLM(client, model_id, tool_delimiter=tool_delimiter)
+```
