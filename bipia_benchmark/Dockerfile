@@ -20,4 +20,9 @@ WORKDIR /app
 COPY bipia_benchmark/benchmark_defense.py /app/benchmark_defense.py
 COPY defenses/ /app/defenses/
 
-CMD ["python", "-u", "benchmark_defense.py"]
+#CMD ["python", "-u", "benchmark_defense.py"]
+#python benchmark_defense.py --dataset email --limit 100 --mode all
+# CMD ["python", "-u", "benchmark_defense.py", "--dataset", "email", "--limit", "5", "--mode", "all"]
+# --limit 0 runs the whole benchmark (11250 prompt combinations)
+CMD ["python", "-u", "benchmark_defense.py", "--dataset", "email", "--limit", "10", "--mode", "defenses", "--concurrency", "800"] 
+# "--mock"]
