@@ -7,3 +7,19 @@ Initialize the BIPIA git submodule by running
 ```
 git submodule update --init --recursive
 ```
+
+### Defense Benchmarking
+
+You can benchmark the effectiveness of different defenses (No Defense, Default Spotlighting, and Enhanced Spotlighting) using `benchmark_defense.py`.
+
+Run the benchmark with:
+```bash
+python benchmark_defense.py --dataset <dataset_name> --limit <max_samples> --mode all
+```
+
+Arguments:
+- `--dataset`: Name of the dataset to use (e.g., `email`).
+- `--limit`: Maximum number of samples to evaluate (useful for testing).
+- `--mode`: `all` (runs all defenses), `baseline` (only scans for vulnerabilities), or `defenses` (only tests defenses).
+
+Results are saved to the `experiment_output` directory, including a `comparison_summary.json` with Attack Success Rates (ASR) for each defense strategy.

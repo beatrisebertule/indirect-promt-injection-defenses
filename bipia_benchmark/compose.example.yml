@@ -14,3 +14,7 @@ services:
     volumes:
       - ./benchmark_defense.py:/app/benchmark_defense.py
       - ./:/app/experiment_output/
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
